@@ -1,0 +1,149 @@
+# Spring boot persistence stuff
+
+
+### Repositories
+
+- Standard JPA types need to be annotated with @Entity and have the @Id annotation for the ID
+- The Repository interface is the top most (root) interface for all managed repositories, its just a marker interface with no methods
+- Interfaces that extend Repository that are of interest are:
+  - CrudRepository - provides methods to save, find, count and delete entities
+  - PagingAndSortingRepository - extends the CrudRepository and provides additional methods to find entities with pagination and sort
+  - JpaSpecificationExecutor - interface that once implemented opens up a number of methods to allow searching based on Specifications
+  - JpaRepository - one of the main interfaces to extend when building a repository based on a relational DB
+  - MongoRepository - another main interface to extend when creating a repository based on the MongoDB DB
+  - ElasticsearchCrudRepository/ElasticsearchRepository - main repository to manage Elasticsearch services
+- To create a repository to manage your entities, just create an interface that extends on of the main interfaces and annotate it with the @Repository annotation
+- Paging is done by using the PagingAndSortingRepository and using a method that takes a Pageable. You can use the PageRequest type to provide the page and size
+
+- Configuration of data/repository projects can be done via XML or by Java Config
+- The @EnableJpaRepositories is used in java config to create the spring proxies for the repository types
+  - This annotation can take a base package to define where the repositories exist, if you dont provide one, it will the use current classes package
+- Just like the @EnableJpaRepositories annotation, a number exist for the other projects, just replace the type @Enable<TYPE>Repositories
+  - e.g. @EnableMongoRepositories, @EnableRedisRepositories, @EnableElasticsearchRepositories etc
+- You can define your own Repositories without using the build in Spring interfaces
+  - To do so, you can use the @RepositoryDefinition annotation to make spring instantiate a proxy for
+  - Using the @NoRepositoryBean annotation will exclude the class/interface from the scan/instantiation
+    - You would typically use if you create a base class to contains behaviour you want shared but dont want an instance of
+- When using a single spring boot data (module) dependency, things are easy, repository instances are bound to types from that dependency
+  - When using multiple data dependencies, additional steps will sometimes be required
+  - When using a module specific interface/class then the repository is valid for that particular module
+    - e.g. when implementing JpaRepository or MongoRepository
+  - When extending a generic interface e.g. Repository and having multiple modules as dependicies, spring will probably complain that the class doesn't belong to a module
+    - When this happens, using the @Enable<TYPE>Repositories with the basePackage property set will hint to spring which module to use
+
+
+### Query Methods
+
+- Spring's proxy can derive queries from repositories in 2 ways
+  - derive the query from the method name
+  - derive the query from a defined one
+- You can define the strategy that spring will use to derive the query by using the queryLookupStrategy property on the @Enable<Type>Repositories annotation
+  - 3 options available, CREATE, USE_DECLARED_QUERY, CREATE_IF_NOT_FOUND
+  - CREATE_IF_NOT_FOUND is the default option. Which will create a query if no predefined query has been provided
+- Method name based queries will strip the following prefixes and parse the rest
+  - find...By, read...By, query...By, count...By, get...By
+  - Expressions can be used at the beginning of the method name e.g. findDistinctUserBy, Top/First (defaults to 1) Top3/First3
+  - You can add additional criteria to the method name with And/Or, OrderBy...Asc/Desc, IgnoreCase, Between, LessThan, GreaterThan, Like
+
+```
+      public interface PersonRepository extends Repository<User, Long> {
+       List<Person> findByEmailAddressAndLastname(EmailAddress emailAddress, String lastname);
+       // Enables the distinct flag for the query
+       List<Person> findDistinctPeopleByLastnameOrFirstname(String lastname, String firstname);
+       List<Person> findPeopleDistinctByLastnameOrFirstname(String lastname, String firstname);
+       // Enabling ignoring case for an individual property
+       List<Person> findByLastnameIgnoreCase(String lastname);
+       // Enabling ignoring case for all suitable properties
+       List<Person> findByLastnameAndFirstnameAllIgnoreCase(String lastname, String firstname);
+       // Enabling static ORDER BY for a query
+       List<Person> findByLastnameOrderByFirstnameAsc(String lastname);
+       List<Person> findByLastnameOrderByFirstnameDesc(String lastname);
+     }
+```
+### Return types
+- Queries can return a number of different types
+- The most common ones are: List, Optional, boolean (exists), Iterable, T (the type), Long (count), Stream
+
+### Property expressions
+- When using method name based queries, it is possible to drill down into properties of properties
+  - For example a person entity can have an address property which it will also have a postcode property
+  - To find People with and address with the postcode of SE14 you would write the method name as follows
+  - findPeopleByAddress_PostCode(String postcode)
+  - this will traverse the object model as shown p.address.postcode
+  - You could write it as: findPeopleByAddressPostCode(String postcode) but this causes spring to guess what the property names are
+    - it will look for AddressPost then code, then Address and Postcode
+  - Using an underscore removes any ambiguity on object traversal
+
+- Query Parameters
+- Some parameters to queries are treated special
+- Pageable and Sort types are those, they must be provided as the last parameter to the method
+
+```
+  Page<User> findByLastname(String lastname, Pageable pageable);
+  Slice<User> findByLastname(String lastname, Pageable pageable);
+  List<User> findByLastname(String lastname, Sort sort);
+  List<User> findByLastname(String lastname, Pageable pageable);
+```
+
+- When making a paginated query, a count query is automatically made, sometimes the query may take a long time.
+  - In this case, you can return a Slice rather than a Page, as slices only know if there is a next page or not and doesn't do the count query
+  - Also lists can be returned from sort and pageable queries, this will block the count query from running
+- Limiting queries can be done with First/Top e.g. List<Person> findFirst10PeopleById(Long id)
+- When limiting by 1 you can return an optional rather than a list Optional<Person> findFirstPersonById(...)
+
+### Streaming
+- A Stream can be returned from queries now but if you use them, you should either close the stream manually for use Java 7s try with resources
+- e.g. Stream<Person> findAllPeopleWithNameNull();
+- Stream<Person> people = repository.findAllPeopleWithNameNull()
+
+### Async
+- Repository queries could be made to be async, just add the @Async annotation to the method name and make sure that the return type is Future, CompletableFuture or ListenableFuture
+- e.g. Future<Person> findFirstPersonByAgeGreaterThan100();
+
+- Custom Repository Behaviour
+- You can add custom methods to a defined repository by creating an interface that doesn't extend anything but have its method
+- Then a new class that implements that interface, make it spring bean enabled by adding @Component annotation and implement the method
+- Then in your Repository interface, extend the normal Spring interface AS well as the custom interface you created
+
+```
+  interface CustomBehaviour {
+    Person blah();
+  }
+
+  @Component
+  class CustomBehaviourImpl implements CustomBehaviour {
+    Person blah() {
+      ...
+    }
+  }
+
+  interface PersonRepositoryWithCustomBehaviour extends JpaRepository<Person, Long>, CustomBehaviour {
+    ...
+  }
+```
+
+- The above will add custom behaviour to a single repository but if you want it for all respositories...
+
+```
+  @NoRepositoryBean
+  interface MyRepositoryWithCustom<T, ID> extends CrudRepository<T, ID> {
+    ...
+  }
+
+  class MyRepositoryWithCustom<T, ID> extends SimpleJpaRepository<T, ID> implements MyRepositoryWithCustom<T, ID> {
+    ...
+  }
+
+  @Configuration
+  @EnableJpaRepositories(repositoryBaseClass = MyRepositoryWithCustom.class)
+  class ApplicationConfiguration { ... }
+
+```
+
+### QueryDsl
+- Is a fluent api dsl that allows the definition of predicates that need to be valid in order for a repository to return a record
+- To enable the QueryDsl, simply add QueryDslPredicateExecutor as an extension on your Repository
+- This will add a number of methods that will accept a Predicate
+- e.g. T findOne(Predicate predicate);
+- You then create the Predicate using the fluent API and send it to the method
+  - e.g. User.
