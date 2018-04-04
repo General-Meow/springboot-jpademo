@@ -60,9 +60,14 @@
        List<Person> findByLastnameOrderByFirstnameDesc(String lastname);
      }
 ```
+- Dynamic queries
+- Most queries defined are static, in that they are defined in code and can only do the things set out at compile time
+- Dynamic queries are possible and is done by using Specifications, CriteriaBuilder and JpaSpecificationExecutor interface for repositories
+- Specifications allow you to define the thing to query at runtime using dot notation
+
 ### Return types
 - Queries can return a number of different types
-- The most common ones are: List, Optional, boolean (exists), Iterable, T (the type), Long (count), Stream
+- The most common ones are: List, Optional, boolean (exists), Iterable, T (the type), Long (count), Stream, List<Object[]>, Page, Slice
 
 ### Property expressions
 - When using method name based queries, it is possible to drill down into properties of properties
@@ -147,3 +152,77 @@
 - e.g. T findOne(Predicate predicate);
 - You then create the Predicate using the fluent API and send it to the method
   - e.g. User.
+
+### Integration
+- Spring data modules can be integrated with Spring MVC
+- Just add the @EnableSpringDataWebSupport annotation to the Spring config app
+- Doing the above register 2 beans, DomainClassConverter and HandlerMethodArgumentResolver
+  - DomainClassConverter allows usage of domain types in controller method signatures - it essentially converts paths variable of id's
+    automatically to domain types, so you dont need to take an ID then do a repository lookup. it does it for you
+  - HandlerMethodArgumentResolver resolves Pageable and Sort objects from query parameters
+- HyperMedia is also supported via the HATEOAS library
+  - this provides PagedResources which is converted from a Page
+  - conversion happens via a PagedResourcesAssembler
+  - You inject this assembler into a controller method and use its toResources method on the entity
+  - e.g. return new ResponseEntity<>(assembler.toResources(persons), HttpStatus.OK);
+- QueryDSL support is also available if the library is on the classpath
+  - adding properties of the entity to the query parameters will form the predicate to the findAll
+  - e.g. ?name=paul,age=30 will become QUser.user.name.eq("paul").and(QUser.user.age.eq(30))
+  - The controller method will need to have the @QuerydslPredicate annotation added to method signature for it to work
+
+```
+@RequestMapping(value = "/", method = RequestMethod.GET)
+String index(Model model, @QuerydslPredicate(root = User.class) Predicate predicate,
+              Pageable pageable, @RequestParam MultiValueMap<String, String> parameters) {
+        model.addAttribute("users", repository.findAll(predicate, pageable));
+        return "index";
+}
+```
+
+
+### Query keywords
+
+And               findByLastnameAndFirstname                                  ... where x.lastname = ?1 and x.firstname = ?2
+Or                findByLastnameOrFirstname                                   ... where x.lastname = ?1 or x.firstname = ?2
+Is,Equals         findByFirstname,findByFirstnameIs,fin dByFirstnameEquals    ... where x.firstname = ?1
+Between           findByStartDateBetween                                      ... where x.startDate between ?1 and ?2
+LessThan          findByAgeLessThan                                           ... where x.age < ?1
+LessThanEqual     findByAgeLessThanEqual                                      ... where x.age <= ?1
+GreaterThan       findByAgeGreaterThan                                        ... where x.age > ?1
+GreaterThanEqual  findByAgeGreaterThanEqual                                   ... where x.age >= ?1
+After             findByStartDateAfter                                        ... where x.startDate > ?1
+Before            findByStartDateBefore                                       ... where x.startDate < ?1
+IsNull            findByAgeIsNull                                             ... where x.age is null
+IsNotNull,NotNull findByAge(Is)NotNull                                        ... where x.age not null
+Like              findByFirstnameLike                                         ... where x.firstname like ?1
+NotLike           findByFirstnameNotLike                                      ... where x.firstname not like ?1
+StartingWith      findByFirstnameStartingWith                                 ... where x.firstname like ?1 (parameter bound with appended %)
+EndingWith        findByFirstnameEndingWith                                   ... where x.firstname like ?1 (parameter bound with prepended %)
+Containing        findByFirstnameContaining                                   ... where x.firstname like ?1 (parameter bound wrapped in %)
+OrderBy           findByAgeOrderByLastnameDesc                                ... where x.age = ?1 order by x.lastname desc
+Not               findByLastnameNot                                           ... where x.lastname <> ?1
+In                findByAgeIn(Collection<Age> ages)                           ... where x.age in ?1
+NotIn             findByAgeNotIn(Collection<Age> age)                         ... where x.age not in ?1
+True              findByActiveTrue()                                          ... where x.active = true
+False             findByActiveFalse()                                         ... where x.active = false
+IgnoreCase        findByFirstnameIgnoreCase                                   ... where UPPER(x.firstame) = UPPER(?1)
+
+
+- Advanced like expression:
+  @Query("select u from User u where u.firstname like %?1")
+  List<User> findByFirstnameEndsWith(String firstname);
+
+### Modifying Queries
+- Its possible to create queries that changes state. So instead of just retrieval type queries, you can create ones that update or delete entities
+- To do this, you need to annotate the query with a @Modifying annotation
+```
+    @Modifying
+    @Query("update User u set u.firstname = ?1 where u.lastname = ?2")
+    int setFixedFirstnameFor(String firstname, String lastname);
+```
+
+### Fetching
+- There are 2 ways to define the way data is fetched on relationships of entities
+  - FetchType on relationship annotations
+  - @NamedEntityGraph on the entity / @EntityGraph on the query
+
